@@ -1,129 +1,67 @@
 <?php
-session_start();
+require __DIR__ . '/../includes/bootstrap.php';
 
-// Redirect logged-in users to dashboard
-if (isset($_SESSION['user_id'])) {
-    header('Location: dashboard.php');
-    exit();
+if (current_user()) {
+    redirect('user/dashboard.php');
 }
-
-include '../includes/db.php'; // Adjust path if needed
-
+$next = safe_next($_GET['next'] ?? $_POST['next'] ?? '', 'user/dashboard.php');
 $errors = [];
-$success = '';
+$old = ['name' => '', 'email' => '', 'phone' => ''];
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // Sanitize and trim inputs
-    $name = trim($_POST['name'] ?? '');
-    $email = trim($_POST['email'] ?? '');
-    $password = $_POST['password'] ?? '';
-    $confirm_password = $_POST['confirm_password'] ?? '';
+if (is_post()) {
+    csrf_verify();
+    $old = ['name' => post_str('name', 100), 'email' => post_str('email', 150), 'phone' => post_str('phone', 20)];
+    $pw = (string) ($_POST['password'] ?? '');
+    $pw2 = (string) ($_POST['confirm_password'] ?? '');
 
-    // Validation
-    if (!$name) {
-        $errors[] = "Name is required.";
-    }
-    if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $errors[] = "Valid email is required.";
-    }
-    if (!$password) {
-        $errors[] = "Password is required.";
-    }
-    if ($password !== $confirm_password) {
-        $errors[] = "Passwords do not match.";
-    }
-    if (strlen($password) < 6) {
-        $errors[] = "Password must be at least 6 characters long.";
-    }
-    // You can add more password strength validation here
+    if (mb_strlen($old['name']) < 2)                          $errors['name'] = 'Please enter your full name.';
+    if (!filter_var($old['email'], FILTER_VALIDATE_EMAIL))    $errors['email'] = 'Please enter a valid email address.';
+    if ($old['phone'] !== '' && !valid_phone($old['phone']))  $errors['phone'] = 'Please enter a valid phone number or leave it blank.';
+    if ($pp = password_problems($pw)) $errors['password'] = $pp[0];
+    if ($pw !== $pw2)                                         $errors['confirm_password'] = 'Passwords do not match.';
+    if (empty($_POST['terms']))                               $errors['terms'] = 'Please accept the terms to continue.';
 
-    if (empty($errors)) {
-        // Check if email already exists
-        $stmt = $conn->prepare("SELECT id FROM users WHERE email = ?");
-        $stmt->bind_param("s", $email);
-        $stmt->execute();
-        $stmt->store_result();
-
-        if ($stmt->num_rows > 0) {
-            $errors[] = "Email is already registered.";
-        } else {
-            // Hash the password
-            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-
-            // Insert new user
-            $stmt = $conn->prepare("INSERT INTO users (name, email, password) VALUES (?, ?, ?)");
-            $stmt->bind_param("sss", $name, $email, $hashed_password);
-
-            if ($stmt->execute()) {
-                $success = "Registration successful! You can now <a href='login.php'>login</a>.";
-            } else {
-                $errors[] = "Database error: Could not register user.";
+    if (!$errors) {
+        try {
+            $id = db_insert('INSERT INTO users (name, email, phone, password) VALUES (?, ?, ?, ?)', 'ssss',
+                [$old['name'], strtolower($old['email']), $old['phone'] !== '' ? $old['phone'] : null, password_hash($pw, PASSWORD_DEFAULT)]);
+            login_user($id);
+            flash('success', 'Your account is ready. Welcome to ExploreX.');
+            redirect($next);
+        } catch (mysqli_sql_exception $e) {
+            if ((int) $e->getCode() !== 1062) {
+                throw $e;
             }
+            $errors['email'] = 'An account with this email already exists. Try logging in instead.';
         }
-        $stmt->close();
     }
 }
+page_header('Create account', ['active' => 'register']);
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Register - ExploreX Tours</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-<link rel="stylesheet" href="../css/style.css" />
-</head>
-<body>
-<?php include '../includes/header.php'; ?>
-
-<div class="container mt-5" style="max-width: 500px;">
-    <h2 class="mb-4">Create an Account</h2>
-
-    <?php if ($errors): ?>
-        <div class="alert alert-danger">
-            <ul>
-                <?php foreach($errors as $error) {
-                    echo "<li>" . htmlspecialchars($error) . "</li>";
-                } ?>
-            </ul>
-        </div>
-    <?php endif; ?>
-
-    <?php if ($success): ?>
-        <div class="alert alert-success">
-            <?php echo $success; ?>
-        </div>
-    <?php endif; ?>
-
-    <form method="POST" action="">
-        <div class="mb-3">
-            <label for="name" class="form-label">Full Name</label>
-            <input type="text" class="form-control" id="name" name="name" required value="<?php echo htmlspecialchars($name ?? '') ?>">
-        </div>
-
-        <div class="mb-3">
-            <label for="email" class="form-label">Email address</label>
-            <input type="email" class="form-control" id="email" name="email" required value="<?php echo htmlspecialchars($email ?? '') ?>">
-        </div>
-
-        <div class="mb-3">
-            <label for="password" class="form-label">Password</label>
-            <input type="password" class="form-control" id="password" name="password" required minlength="6">
-        </div>
-
-        <div class="mb-3">
-            <label for="confirm_password" class="form-label">Confirm Password</label>
-            <input type="password" class="form-control" id="confirm_password" name="confirm_password" required minlength="6">
-        </div>
-
-        <button type="submit" class="btn btn-primary w-100">Register</button>
-    </form>
-
-    <p class="mt-3">Already have an account? <a href="login.php">Login here</a>.</p>
-</div>
-
-<?php include '../includes/footer.php'; ?>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+<div class="auth-wrap"><div class="auth-card" style="width:min(520px,100% - 40px)">
+  <p class="eyebrow">Join ExploreX</p><h1>Create your account</h1>
+  <p class="muted">Book trips, save favourites and track everything in one place.</p>
+  <?php render_errors($errors); ?>
+  <form method="post" action="" novalidate>
+    <?= csrf_field() ?><input type="hidden" name="next" value="<?= e($next) ?>">
+    <div class="form-row"><label class="lbl" for="name">Full name</label>
+      <input id="name" name="name" type="text" required maxlength="100" value="<?= e($old['name']) ?>" autocomplete="name"></div>
+    <div class="form-grid">
+      <div class="form-row"><label class="lbl" for="email">Email address</label>
+        <input id="email" name="email" type="email" required maxlength="150" value="<?= e($old['email']) ?>" autocomplete="email"></div>
+      <div class="form-row"><label class="lbl" for="phone">Phone <span class="muted">(optional)</span></label>
+        <input id="phone" name="phone" type="tel" maxlength="20" value="<?= e($old['phone']) ?>" autocomplete="tel"></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row"><label class="lbl" for="password">Password</label>
+        <input id="password" name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password">
+        <div class="hint">8+ characters with a letter and a number.</div></div>
+      <div class="form-row"><label class="lbl" for="confirm_password">Confirm password</label>
+        <input id="confirm_password" name="confirm_password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></div>
+    </div>
+    <div class="form-row"><label class="check"><input type="checkbox" name="terms" value="1" required> <span>I understand this is an academic demo site and payments are simulated.</span></label></div>
+    <button class="btn btn-block btn-lg" type="submit">Create account</button>
+  </form>
+  <p class="center muted" style="margin:20px 0 0">Already registered? <a href="<?= e(url('user/login.php?next=' . rawurlencode($next))) ?>">Log in</a></p>
+</div></div>
+<?php page_footer();

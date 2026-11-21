@@ -1,0 +1,4 @@
+# Do not allow the include helper to be requested directly
+<Files "_*.php">
+  Require all denied
+</Files>

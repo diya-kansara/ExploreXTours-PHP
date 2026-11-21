@@ -1,79 +1,32 @@
 <?php
-session_start();
-include '../includes/db.php';
-
-$errors = [];
-
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $email = trim($_POST['email'] ?? '');
-    $password = $_POST['password'] ?? '';
-
-    if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $errors[] = "Valid email is required.";
-    }
-    if (!$password) {
-        $errors[] = "Password is required.";
-    }
-
-    if (empty($errors)) {
-        $stmt = $conn->prepare("SELECT id, name, password FROM admins WHERE email = ?");
-        $stmt->bind_param("s", $email);
-        $stmt->execute();
-        $stmt->store_result();
-
-        if ($stmt->num_rows == 1) {
-            $stmt->bind_result($admin_id, $admin_name, $hashed_password);
-            $stmt->fetch();
-
-            if (password_verify($password, $hashed_password)) {
-                session_regenerate_id(true);
-                $_SESSION['admin_id'] = $admin_id;
-                $_SESSION['admin_name'] = $admin_name;
-                header("Location: /Online-Tours-and-Travels-Website/admin/dashboard.php");
-                exit();
-            } else {
-                $errors[] = "Incorrect password.";
-            }
-        } else {
-            $errors[] = "No admin found with that email.";
-        }
-        $stmt->close();
+require __DIR__ . '/../includes/bootstrap.php';
+if (current_admin()) { redirect('admin/dashboard.php'); }
+$errors = []; $email = '';
+if (is_post()) {
+    csrf_verify();
+    $email = post_str('email', 150);
+    $pw = (string) ($_POST['password'] ?? '');
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $pw === '') {
+        $errors[] = 'Please enter your email and password.';
+    } else {
+        [$row, $err] = check_credentials('admin', $email, $pw);
+        if ($row) { login_admin((int) $row['id']); redirect('admin/dashboard.php'); }
+        $errors[] = $err;
     }
 }
-
-// Include common header
-include '../includes/header.php';
-?>
-
-<div class="container mt-5" style="max-width: 400px;">
-    <h2 class="mb-4 text-center">Admin Login</h2>
-
-    <?php if ($errors): ?>
-        <div class="alert alert-danger">
-            <ul class="mb-0">
-                <?php foreach ($errors as $error) {
-                    echo "<li>" . htmlspecialchars($error) . "</li>";
-                } ?>
-            </ul>
-        </div>
-    <?php endif; ?>
-
-    <form method="POST" action="">
-        <div class="mb-3">
-            <label for="email" class="form-label">Email address</label>
-            <input type="email" class="form-control" id="email" name="email" required value="<?php echo htmlspecialchars($email ?? '') ?>">
-        </div>
-
-        <div class="mb-3">
-            <label for="password" class="form-label">Password</label>
-            <input type="password" class="form-control" id="password" name="password" required minlength="6">
-        </div>
-
-        <button type="submit" class="btn btn-primary w-100">Login</button>
-    </form>
-</div>
-
-<?php
-// Include common footer
-include '../includes/footer.php';
-?>
+?><!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow"><meta name="csrf-token" content="<?= e(csrf_token()) ?>"><title>Admin login · ExploreX</title>
+<link rel="icon" href="<?= e(url('assets/img/favicon.svg')) ?>" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="<?= e(url('assets/css/app.css')) ?>"><link rel="stylesheet" href="<?= e(url('assets/css/admin.css')) ?>"></head>
+<body class="admin"><div class="login-bg"><div class="auth-card">
+  <p class="eyebrow">Staff only</p><h1>Admin sign in</h1>
+  <p class="muted">ExploreX administration panel.</p>
+  <?php render_errors($errors); ?>
+  <form method="post" action="" novalidate><?= csrf_field() ?>
+    <div class="form-row"><label class="lbl" for="email">Email</label><input id="email" name="email" type="email" required maxlength="150" value="<?= e($email) ?>" autocomplete="username" autofocus></div>
+    <div class="form-row"><label class="lbl" for="password">Password</label><input id="password" name="password" type="password" required autocomplete="current-password"></div>
+    <button class="btn btn-block btn-lg" type="submit">Sign in</button>
+  </form>
+  <p class="center small muted" style="margin:18px 0 0"><a href="<?= e(url('index.php')) ?>">← Back to website</a></p>
+</div></div></body></html>
