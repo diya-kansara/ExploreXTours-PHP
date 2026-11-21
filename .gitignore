@@ -1,0 +1,20 @@
+# Local configuration & secrets - never commit
+config/config.php
+.env
+*.env
+*.local.php
+
+# Uploaded files (keep the folder, ignore the content)
+uploads/packages/*
+!uploads/packages/.gitkeep
+
+# Logs, OS and editor files
+logs/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local test artefacts
+tests/output/
