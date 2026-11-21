@@ -1,8 +1,10 @@
 <?php
+require __DIR__ . '/../includes/bootstrap.php';
+if (!is_post()) {            // logout is a state change, so it requires a POST with a CSRF token
+    redirect('index.php');
+}
+csrf_verify();
+logout_all();
 session_start();
-session_unset();
-session_destroy();
-
-// Redirect to homepage or login page
-header("Location: ../index.php"); // Adjust path if needed
-exit();
+flash('info', 'You have been logged out.');
+redirect('index.php');
