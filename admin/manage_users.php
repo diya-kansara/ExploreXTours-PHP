@@ -1,105 +1,23 @@
 <?php
-session_start();
-include '../includes/db.php';
-include '../includes/header.php'; // Use your shared header
-
-// Optional: Redirect if not admin
-if (!isset($_SESSION['admin_id'])) {
-    header("Location: /Online-Tours-and-Travels-Website/index.php");
-    exit();
-}
-
-// Handle user deletion
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['delete_user_id'])) {
-    $delete_user_id = (int) $_POST['delete_user_id'];
-
-    // Delete user's bookings first (if you want to cascade manually)
-    $stmt1 = $conn->prepare("DELETE FROM bookings WHERE user_id = ?");
-    $stmt1->bind_param("i", $delete_user_id);
-    $stmt1->execute();
-    $stmt1->close();
-
-    // Delete the user
-    $stmt2 = $conn->prepare("DELETE FROM users WHERE id = ?");
-    $stmt2->bind_param("i", $delete_user_id);
-    $stmt2->execute();
-    $stmt2->close();
-
-    // Redirect to avoid resubmission on page refresh
-    header("Location: manage_users.php");
-    exit();
-}
+require __DIR__ . '/_init.php';
+$q = get_str('q', 80); $page = max(1, get_int('page', 1)); $per = 20;
+$w = '1=1'; $types = ''; $params = [];
+if ($q !== '') { $like = '%' . addcslashes($q, '%_\\') . '%'; $w = '(u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)'; $types = 'sss'; $params = [$like, $like, $like]; }
+$total = (int) db_value("SELECT COUNT(*) FROM users u WHERE $w", $types, $params);
+$pages = max(1, (int) ceil($total / $per)); $page = min($page, $pages);
+$rows = db_all("SELECT u.id, u.name, u.email, u.phone, u.created_at,
+        (SELECT COUNT(*) FROM bookings b WHERE b.user_id = u.id) AS bookings,
+        (SELECT COALESCE(SUM(b.total_amount),0) FROM bookings b WHERE b.user_id = u.id AND b.status IN ('Confirmed','Completed')) AS spent
+      FROM users u WHERE $w ORDER BY u.created_at DESC, u.id DESC LIMIT ? OFFSET ?", $types . 'ii', array_merge($params, [$per, ($page - 1) * $per]));
+admin_header('Customers', 'users', $admin);
 ?>
-
-<div class="container mt-5">
-    <h2 class="mb-4">Manage Users</h2>
-
-    <?php
-    $user_query = "SELECT * FROM users ORDER BY id DESC";
-    $user_result = mysqli_query($conn, $user_query);
-
-    if (mysqli_num_rows($user_result) > 0):
-        while ($user = mysqli_fetch_assoc($user_result)):
-            $user_id = (int) $user['id'];
-            $user_email = mysqli_real_escape_string($conn, $user['email']);
-
-            // Fetch bookings by user_id OR by email as fallback
-            $booking_query = "
-                SELECT b.id, p.title AS package_title, b.booking_date, b.status
-                FROM bookings b
-                JOIN packages p ON b.package_id = p.id
-                WHERE b.user_id = $user_id OR b.email = '$user_email'
-                ORDER BY b.booking_date DESC
-            ";
-            $booking_result = mysqli_query($conn, $booking_query);
-    ?>
-        <div class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <div>
-                    <strong><?php echo htmlspecialchars($user['name']); ?></strong>
-                    (<?php echo htmlspecialchars($user['email']); ?>)
-                    <span class="text-muted ml-3">Registered on: <?php echo $user['created_at']; ?></span>
-                </div>
-                <form method="POST" onsubmit="return confirm('Are you sure you want to delete this user?');">
-                    <input type="hidden" name="delete_user_id" value="<?php echo $user_id; ?>">
-                    <button type="submit" class="btn btn-danger btn-sm">Delete User</button>
-                </form>
-            </div>
-            <div class="card-body">
-                <h5 class="card-title">Bookings:</h5>
-
-                <?php if (mysqli_num_rows($booking_result) > 0): ?>
-                    <table class="table table-bordered table-sm">
-                        <thead class="thead-light">
-                            <tr>
-                                <th>#Booking ID</th>
-                                <th>Package</th>
-                                <th>Booking Date</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php while ($booking = mysqli_fetch_assoc($booking_result)): ?>
-                                <tr>
-                                    <td><?php echo $booking['id']; ?></td>
-                                    <td><?php echo htmlspecialchars($booking['package_title']); ?></td>
-                                    <td><?php echo $booking['booking_date']; ?></td>
-                                    <td><?php echo ucfirst($booking['status']); ?></td>
-                                </tr>
-                            <?php endwhile; ?>
-                        </tbody>
-                    </table>
-                <?php else: ?>
-                    <p class="text-muted">No bookings found for this user.</p>
-                <?php endif; ?>
-            </div>
-        </div>
-    <?php
-        endwhile;
-    else:
-        echo "<p>No users found.</p>";
-    endif;
-    ?>
-</div>
-
-<?php include '../includes/footer.php'; ?>
+<form class="toolbar" method="get"><div class="f"><label for="q">Search</label><input id="q" type="search" name="q" value="<?= e($q) ?>" placeholder="Name, email or phone"></div>
+  <button class="btn btn-sm" type="submit">Search</button><a class="btn btn-sm btn-ghost" href="<?= e(url('admin/manage_users.php')) ?>">Clear</a></form>
+<p class="muted small"><?= (int) $total ?> customer<?= $total === 1 ? '' : 's' ?></p>
+<div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Joined</th><th>Bookings</th><th class="num">Booked value</th><th></th></tr></thead><tbody>
+<?php if (!$rows): ?><tr><td colspan="7" class="center muted" style="padding:32px">No customers found.</td></tr><?php endif; ?>
+<?php foreach ($rows as $u): ?><tr><td><strong><?= e($u['name']) ?></strong></td><td><?= e($u['email']) ?></td><td><?= e($u['phone'] ?: '—') ?></td>
+  <td><?= e(fmt_date($u['created_at'])) ?></td><td><?= (int) $u['bookings'] ?></td><td class="num"><?= e(money($u['spent'])) ?></td>
+  <td class="actions"><a class="btn btn-sm btn-outline" href="<?= e(url('admin/user_view.php?id=' . (int) $u['id'])) ?>">View</a></td></tr><?php endforeach; ?></tbody></table></div>
+<?= pager($page, $pages, 'admin/manage_users.php', ['q' => $q]) ?>
+<?php admin_footer();

@@ -1,88 +1,35 @@
 <?php
-session_start();
-include '../includes/db.php';
-
-// Check admin login
-if (!isset($_SESSION['admin_id'])) {
-    header('Location: login.php');
-    exit();
-}
-
-// Handle delete request (using GET for simplicity, you can improve by using POST)
-if (isset($_GET['delete'])) {
-    $delete_id = intval($_GET['delete']);
-    
-    // Get image filename before deleting package
-    $stmt = $conn->prepare("SELECT image FROM packages WHERE id = ?");
-    $stmt->bind_param("i", $delete_id);
-    $stmt->execute();
-    $stmt->bind_result($image_file);
-    $stmt->fetch();
-    $stmt->close();
-    
-    // Delete package record
-    $stmt = $conn->prepare("DELETE FROM packages WHERE id = ?");
-    $stmt->bind_param("i", $delete_id);
-    $stmt->execute();
-    $stmt->close();
-
-    // Delete image file if exists
-    if ($image_file && file_exists('../images/' . $image_file)) {
-        unlink('../images/' . $image_file);
-    }
-
-    // Redirect to avoid resubmission
-    header('Location: manage_packages.php');
-    exit();
-}
-
-// Fetch all packages
-$result = $conn->query("SELECT * FROM packages ORDER BY id DESC");
-
-include '../includes/header.php';
+require __DIR__ . '/_init.php';
+$q = get_str('q', 80); $cat = get_int('category'); $state = get_str('state', 8);
+$where = ['1=1']; $types = ''; $params = [];
+if ($q !== '') { $like = '%' . addcslashes($q, '%_\\') . '%'; $where[] = '(p.title LIKE ? OR p.location LIKE ?)'; $types .= 'ss'; array_push($params, $like, $like); }
+if ($cat > 0) { $where[] = 'p.category_id = ?'; $types .= 'i'; $params[] = $cat; }
+if ($state === 'active') { $where[] = 'p.is_active = 1'; } elseif ($state === 'hidden') { $where[] = 'p.is_active = 0'; }
+$rows = db_all(
+    'SELECT p.id, p.title, p.location, p.price, p.duration, p.image, p.is_active, p.is_featured, c.name AS category,
+            (SELECT COUNT(*) FROM bookings b WHERE b.package_id = p.id) AS bookings
+       FROM packages p LEFT JOIN categories c ON c.id = p.category_id WHERE ' . implode(' AND ', $where) . ' ORDER BY p.id DESC', $types, $params
+);
+$cats = db_all('SELECT id, name FROM categories ORDER BY sort_order');
+admin_header('Packages', 'packages', $admin);
 ?>
-
-<div class="container mt-5">
-    <h1>Manage Packages</h1>
-    <a href="add_package.php" class="btn btn-success mb-3">Add New Package</a>
-
-    <?php if ($result->num_rows > 0): ?>
-    <table class="table table-bordered table-striped">
-        <thead class="thead-dark">
-            <tr>
-                <th>ID</th>
-                <th>Title</th>
-                <th>Location</th>
-                <th>Price (₹)</th>
-                <th>Image</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php while ($pkg = $result->fetch_assoc()): ?>
-                <tr>
-                    <td><?php echo htmlspecialchars($pkg['id']); ?></td>
-                    <td><?php echo htmlspecialchars($pkg['title']); ?></td>
-                    <td><?php echo htmlspecialchars($pkg['location']); ?></td>
-                    <td><?php echo number_format($pkg['price'], 2); ?></td>
-                    <td>
-                        <?php if ($pkg['image'] && file_exists('../images/' . $pkg['image'])): ?>
-                            <img src="../images/<?php echo htmlspecialchars($pkg['image']); ?>" alt="Image" style="width: 80px; height: auto;">
-                        <?php else: ?>
-                            No Image
-                        <?php endif; ?>
-                    </td>
-                    <td>
-                        <a href="edit_package.php?id=<?php echo $pkg['id']; ?>" class="btn btn-primary btn-sm">Edit</a>
-                        <a href="manage_packages.php?delete=<?php echo $pkg['id']; ?>" onclick="return confirm('Are you sure you want to delete this package?');" class="btn btn-danger btn-sm">Delete</a>
-                    </td>
-                </tr>
-            <?php endwhile; ?>
-        </tbody>
-    </table>
-    <?php else: ?>
-        <p>No packages found. <a href="add_package.php">Add a package</a>.</p>
-    <?php endif; ?>
-</div>
-
-<?php include '../includes/footer.php'; ?>
+<form class="toolbar" method="get">
+  <div class="f"><label for="q">Search</label><input id="q" type="search" name="q" value="<?= e($q) ?>" placeholder="Title or destination"></div>
+  <div class="f"><label for="c">Category</label><select id="c" name="category"><option value="">All</option><?php foreach ($cats as $c): ?><option value="<?= (int) $c['id'] ?>" <?= $cat === (int) $c['id'] ? 'selected' : '' ?>><?= e($c['name']) ?></option><?php endforeach; ?></select></div>
+  <div class="f"><label for="s">Visibility</label><select id="s" name="state"><option value="">All</option><option value="active" <?= $state === 'active' ? 'selected' : '' ?>>Visible</option><option value="hidden" <?= $state === 'hidden' ? 'selected' : '' ?>>Hidden</option></select></div>
+  <button class="btn btn-sm" type="submit">Filter</button><a class="btn btn-sm btn-ghost" href="<?= e(url('admin/manage_packages.php')) ?>">Clear</a>
+  <a class="btn btn-sm" style="margin-left:auto" href="<?= e(url('admin/add_package.php')) ?>">+ Add package</a>
+</form>
+<div class="table-wrap"><table class="table"><thead><tr><th></th><th>Package</th><th>Category</th><th class="num">Price</th><th>Bookings</th><th>Status</th><th></th></tr></thead><tbody>
+<?php if (!$rows): ?><tr><td colspan="7" class="center muted" style="padding:32px">No packages found.</td></tr><?php endif; ?>
+<?php foreach ($rows as $p): ?><tr>
+  <td><img class="thumb" src="<?= e(pkg_image_url($p['image'])) ?>" alt=""></td>
+  <td class="wrap"><strong><?= e($p['title']) ?></strong><div class="muted small"><?= e($p['location']) ?> · <?= e($p['duration']) ?></div></td>
+  <td><?= e($p['category'] ?? '-') ?></td><td class="num"><?= e(money($p['price'])) ?></td><td><?= (int) $p['bookings'] ?></td>
+  <td><?= $p['is_active'] ? '<span class="badge badge-ok">Visible</span>' : '<span class="badge badge-muted">Hidden</span>' ?><?= $p['is_featured'] ? ' <span class="badge badge-info">Featured</span>' : '' ?></td>
+  <td class="actions"><div class="row-actions">
+    <a class="btn btn-sm btn-outline" href="<?= e(url('admin/edit_package.php?id=' . (int) $p['id'])) ?>">Edit</a>
+    <?= admin_action_form(url('admin/package_action.php'), ['id' => $p['id'], 'action' => 'toggle'], $p['is_active'] ? 'Hide' : 'Show', 'btn btn-sm btn-ghost') ?>
+    <?= admin_action_form(url('admin/package_action.php'), ['id' => $p['id'], 'action' => 'delete'], 'Delete', 'btn btn-sm btn-ghost', 'Delete “' . $p['title'] . '” permanently? This cannot be undone.') ?></div></td>
+</tr><?php endforeach; ?></tbody></table></div>
+<?php admin_footer();
